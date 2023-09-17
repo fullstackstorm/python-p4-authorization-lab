@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from flask import Flask, make_response, jsonify, request, session
+from flask import Flask, make_response, jsonify, request, session, g
 from flask_migrate import Migrate
 from flask_restful import Api, Resource
 
@@ -17,6 +17,20 @@ migrate = Migrate(app, db)
 db.init_app(app)
 
 api = Api(app)
+
+def before_request_custom(methods):
+    def decorator(f):
+        def wrapper(*args, **kwargs):
+            # Check if the current request method is in the list of allowed methods
+            if request.method in methods:
+                # Perform actions specific to these methods
+                # For example, you can set a flag in the request context
+                if not session['user_id']:
+                    response = make_response({'error': 'Unauthorized'}, 401)
+                    return response
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
 class ClearSession(Resource):
 
@@ -85,14 +99,29 @@ class CheckSession(Resource):
         return {}, 401
 
 class MemberOnlyIndex(Resource):
-    
+    method_decorators = [before_request_custom(["GET"])]
+
     def get(self):
-        pass
+        articles = [article.to_dict() for article in Article.query.filter_by(is_member_only=True).all()]
+        return make_response(jsonify(articles), 200)
 
 class MemberOnlyArticle(Resource):
-    
+    method_decorators = [before_request_custom(["GET"])]
+
     def get(self, id):
-        pass
+        article = Article.query.filter(Article.id == id).first()
+        article_json = article.to_dict()
+
+        if not session.get('user_id'):
+            session['page_views'] = 0 if not session.get('page_views') else session.get('page_views')
+            session['page_views'] += 1
+
+            if session['page_views'] <= 3:
+                return article_json, 200
+
+            return {'message': 'Maximum pageview limit reached'}, 401
+
+        return article_json, 200
 
 api.add_resource(ClearSession, '/clear', endpoint='clear')
 api.add_resource(IndexArticle, '/articles', endpoint='article_list')
